@@ -1,29 +1,33 @@
-// src/hooks/useFinnhub.js
-// Fetches quote + profile + candles (1Y) for a given symbol
-
 const BASE = 'https://finnhub.io/api/v1'
 
-export async function fetchETFData(symbol, apiKey) {
-  const headers = { 'X-Finnhub-Token': apiKey }
+function url(path, apiKey, params = {}) {
+  const q = new URLSearchParams({ ...params, token: apiKey })
+  return `${BASE}${path}?${q}`
+}
 
-  // Current quote
-  const quoteRes = await fetch(`${BASE}/quote?symbol=${symbol}`, { headers })
+export async function fetchETFData(symbol, apiKey) {
+  const quoteRes = await fetch(url('/quote', apiKey, { symbol }))
   const quote = await quoteRes.json()
 
-  // Company/ETF profile
-  const profileRes = await fetch(`${BASE}/etf/profile?symbol=${symbol}`, { headers })
-  const profile = await profileRes.json()
+  let profile = {}
+  try {
+    const profileRes = await fetch(url('/etf/profile', apiKey, { symbol }))
+    profile = await profileRes.json()
+  } catch (_) {}
 
-  // 1-year candles (weekly) for chart
+  if (!profile?.name) {
+    try {
+      const compRes = await fetch(url('/stock/profile2', apiKey, { symbol }))
+      const comp = await compRes.json()
+      if (comp?.name) profile = { ...profile, name: comp.name, currency: comp.currency }
+    } catch (_) {}
+  }
+
   const to = Math.floor(Date.now() / 1000)
   const from = to - 365 * 24 * 60 * 60
-  const candleRes = await fetch(
-    `${BASE}/stock/candle?symbol=${symbol}&resolution=W&from=${from}&to=${to}`,
-    { headers }
-  )
+  const candleRes = await fetch(url('/stock/candle', apiKey, { symbol, resolution: 'W', from, to }))
   const candles = await candleRes.json()
 
-  // Annual return estimate from 1Y candle data
   let annualReturn = null
   if (candles.s === 'ok' && candles.c?.length >= 2) {
     const first = candles.c[0]
@@ -31,7 +35,6 @@ export async function fetchETFData(symbol, apiKey) {
     annualReturn = ((last - first) / first) * 100
   }
 
-  // Build weekly chart data
   const chartData = []
   if (candles.s === 'ok') {
     candles.t.forEach((ts, i) => {
@@ -61,7 +64,6 @@ export async function fetchETFData(symbol, apiKey) {
 }
 
 export async function fetchMultipleETFs(symbols, apiKey) {
-  // Stagger requests to avoid rate limits (60/min on free plan)
   const results = []
   for (let i = 0; i < symbols.length; i++) {
     if (i > 0) await new Promise(r => setTimeout(r, 300))
